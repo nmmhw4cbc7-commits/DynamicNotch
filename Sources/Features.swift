@@ -45,7 +45,7 @@ struct EventItem: Identifiable, Equatable {
 let accentOptions: [(String, String)] = [("orange", "Orange"), ("green", "Grün"), ("blue", "Blau"),
                                          ("pink", "Pink"), ("purple", "Lila"), ("red", "Rot")]
 
-func accentColor(_ n: String) -> Color {
+func notchAccent(_ n: String) -> Color {
     switch n {
     case "green": return .green
     case "blue": return .blue

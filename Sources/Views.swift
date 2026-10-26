@@ -83,7 +83,7 @@ struct ActionButton: View {
             .frame(maxWidth: .infinity)
             .frame(height: 52)
             .background(RoundedRectangle(cornerRadius: 12)
-                .fill(active ? accentColor(accentName).opacity(0.85) : Color.white.opacity(0.10)))
+                .fill(active ? notchAccent(accentName).opacity(0.85) : Color.white.opacity(0.10)))
         }
         .buttonStyle(.plain)
     }
@@ -190,7 +190,7 @@ struct HomeTab: View {
     var pomodoro: some View {
         HStack(spacing: 10) {
             Image(systemName: m.onBreak ? "cup.and.saucer.fill" : "brain.head.profile")
-                .foregroundColor(accentColor(accentName))
+                .foregroundColor(notchAccent(accentName))
             Text(m.timeString).font(.system(size: 20, weight: .medium).monospacedDigit())
             Text(m.onBreak ? "Pause" : "Fokus").font(.caption).foregroundColor(.gray)
             if m.sessions > 0 {
@@ -593,7 +593,7 @@ struct NotchView: View {
                 if m.running {
                     Text(m.timeString)
                         .font(.system(size: 11, weight: .medium).monospacedDigit())
-                        .foregroundColor(accentColor(accentName))
+                        .foregroundColor(notchAccent(accentName))
                 } else if showEq {
                     EqualizerView()
                 } else {
@@ -725,7 +725,7 @@ struct NotchView: View {
                 Image(systemName: m.pinned ? "pin.fill" : "pin")
                     .font(.system(size: 12))
                     .frame(width: 30, height: 26)
-                    .foregroundColor(m.pinned ? accentColor(accentName) : .gray)
+                    .foregroundColor(m.pinned ? notchAccent(accentName) : .gray)
             }
             .buttonStyle(.plain)
             .help("Notch offen halten")
