@@ -6,8 +6,8 @@ APP="build/$NAME.app"
 rm -rf build && mkdir -p "$APP/Contents/MacOS" build/dmg
 
 echo "▶ Kompiliere…"
-swiftc -O -target arm64-apple-macos14.0  Sources/main.swift -o build/$NAME-arm64
-swiftc -O -target x86_64-apple-macos14.0 Sources/main.swift -o build/$NAME-x86
+swiftc -O -target arm64-apple-macos14.0  Sources/*.swift -o build/$NAME-arm64
+swiftc -O -target x86_64-apple-macos14.0 Sources/*.swift -o build/$NAME-x86
 lipo -create build/$NAME-arm64 build/$NAME-x86 -output "$APP/Contents/MacOS/$NAME"
 rm build/$NAME-arm64 build/$NAME-x86
 
@@ -20,11 +20,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>CFBundleIdentifier</key><string>local.dynamicnotch</string>
 <key>CFBundleName</key><string>$NAME</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.0</string>
+<key>CFBundleShortVersionString</key><string>2.1</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 <key>NSPrincipalClass</key><string>NSApplication</string>
 <key>NSCalendarsUsageDescription</key><string>Zeigt deinen nächsten Termin in der Notch.</string>
+<key>NSAppleEventsUsageDescription</key><string>Zeigt und steuert die Wiedergabe in Spotify und Musik.</string>
 <key>NSCalendarsFullAccessUsageDescription</key><string>Zeigt deinen nächsten Termin in der Notch.</string>
 </dict></plist>
 PLIST
