@@ -3,24 +3,35 @@
 Eine Dynamic Island für die Mac-Notch: Maus an die Notch, und sie klappt auf.
 Auf Macs **ohne** Notch wird automatisch eine virtuelle Notch oben in der Bildschirmmitte gezeichnet.
 
-## Funktionen
+## Funktionen (Version 3.0)
 
-Die Notch hat jetzt 7 Bereiche (Leiste unten im aufgeklappten Panel):
+Die Notch hat jetzt 8 Bereiche (Leiste unten, einzeln ausblendbar, Wechsel auch per Zwei-Finger-Wischen):
 
-- **Übersicht:** Uhr, Datum, Akku, die nächsten 3 Termine mit Countdown, Pomodoro (Dauer einstellbar, zählt erledigte Runden)
-- **Medien:** Spotify & Apple Music mit Cover, Titel, Fortschritt (zum Spulen klicken/ziehen), Play/Pause/Vor/Zurück. Live-Anzeige mit Cover und Equalizer auch in der eingeklappten Notch
-- **Werkzeuge:** Screenshot in die Zwischenablage, Farbwähler (Hex wird kopiert), Koffein (Mac wach halten), Dunkelmodus, Display aus, Bildschirmschoner, Notizblock
-- **Zwischenablage:** Verlauf der letzten 25 Texte (nur im Speicher, Passwortmanager-Einträge werden ignoriert), Klick kopiert erneut
-- **Ablage:** Drag & Drop Shelf, per AirDrop senden, im Finder zeigen, wieder herausziehen
-- **System:** CPU mit Verlaufsgrafik, Arbeitsspeicher, Netzwerk-Geschwindigkeit
-- **Einstellungen:** Hover oder Klick zum Öffnen, Haptik, Hinweise ein/aus, Autostart, Timer-Dauer
-- **Lautstärke- und Helligkeits-Animation**, **Fokus-Anzeige**, **Sperrbildschirm-Schloss** (wie bisher)
-- **Hinweise in der Notch:** Netzteil verbunden/getrennt, Akku niedrig, Termin in 5 Minuten, Pomodoro fertig
-- **Eigenes Einstellungsfenster „DynamicNotch Einstellungen“** (Menüleisten-Symbol oder Rechtsklick auf die Notch → Einstellungen…): Öffnen/Schließen mit Verzögerung, Start-Bereich, Akzentfarbe, 12/24-h-Uhr, Sekunden, Datum, Anzeigedauer, Musik-Quellen einzeln, Equalizer/Cover, Pomodoro mit langer Pause, Auto-Start und Klang, Anzeigen einzeln abschaltbar, Akku-Schwelle, Termin-Vorlauf, Zwischenablage-Limit, Reset
-- **Pin:** Notch offen halten (Stecknadel oder `⌃⌥N`)
+- **Übersicht:** Uhr, Datum, Akku, **Wetter** (Ort in den Einstellungen, Open-Meteo ohne Konto), nächste 3 Termine mit Countdown, **„Meeting beitreten"-Knopf** für Zoom/Meet/Teams/Webex/FaceTime, Pomodoro mit Fortschrittsbalken und „Phase überspringen"
+- **Medien:** Spotify & Apple Music mit Cover, **Farbe passend zum Cover**, Spulen, Steuerung, **Lautstärkeregler**, Klick aufs Cover öffnet den Player
+- **Timer (neu):** Kurzzeitwecker mit Ring und Schnellwahl (1 m … 1 h, +1 Min, Pause), **Stoppuhr mit Runden**; läuft live in der eingeklappten Notch mit Fortschrittslinie
+- **Werkzeuge:** 12 Schnellaktionen – Screenshot, Farbwähler, Koffein (mit Zeitlimit per Rechtsklick), Dunkelmodus, **Sperren**, Display aus, **Ruhezustand**, Bildschirmschoner, **Mikrofon stumm**, **WLAN an/aus**, **Schreibtisch-Icons ausblenden**, **versteckte Dateien zeigen**; dazu **Taschenrechner** (Enter kopiert das Ergebnis) und Notizblock
+- **Zwischenablage:** Verlauf mit **Suche**, **Anheften** (Angeheftetes bleibt gespeichert), Rechtsklick: Einfügen, Link öffnen, Entfernen; optional fügt ein Klick direkt in die vordere App ein
+- **Ablage & Downloads:** Drag & Drop Shelf (**bleibt nach Neustart erhalten**), AirDrop, **ZIP auf dem Schreibtisch**, Quick Look, Pfad kopieren; **Downloads-Ansicht** mit laufenden (Safari, Chrome, Firefox …) und letzten Downloads
+- **System:** CPU-Verlauf, RAM, **SSD-Belegung**, Netzwerk, **Laufzeit**, **Akku-Zustand und Ladezyklen**
+- **Einstellungen:** Schnellschalter, Update-Prüfung
+- **Live-Anzeigen in der eingeklappten Notch:** Timer, Pomodoro, Stoppuhr, Downloads, Musik mit Equalizer in Coverfarbe
+- **Hinweise:** Lautstärke, Helligkeit, Fokus, Sperrbildschirm, Netzteil, Akku niedrig, Termine, Pomodoro, **Timer fertig**, **Download fertig**, **Bluetooth-Geräte (AirPods, Tastatur, Maus) verbunden/getrennt**, **Update verfügbar**
+- **Im Vollbild automatisch ausgeblendet** (Videos, Spiele, Präsentationen), optionaler **Umriss** um die Notch, 10 Akzentfarben
+- **Einstellungsfenster** mit neuem Bereich „Widgets", Bereiche ein-/ausblenden, **Einstellungen exportieren/importieren**, **Update-Prüfung** über GitHub-Releases
+- **Pin:** Notch offen halten (Stecknadel oder `⌃⌥N`), Rechtsklick auf die Notch: Timer starten, Koffein, Updates, Einstellungen
 - **Funktionstasten in der Notch:** F1/F2 Helligkeit, F3 Mission Control, F4 Spotlight/Launchpad, F5 Diktieren, F6 Fokus,
-F7/F8/F9 Zurück/Wiedergabe/Vor, F10 Stumm, F11/F12 Leiser/Lauter (Anzeige je nach Tastatur-Modell)
-- Rechtsklick auf die Notch → Beenden (zeigt auch, ob der Tastenabfang aktiv ist)
+F7/F8/F9 Zurück/Wiedergabe/Vor, F10 Stumm, F11/F12 Leiser/Lauter
+
+### Behoben in 3.0
+- Spotify/Musik wurden nach dem Beenden durch die Abfrage wieder gestartet
+- Pomodoro lief nach dem Ruhezustand falsch (rechnet jetzt mit Enddatum)
+- Timer/Uhr blieben stehen, solange ein Menü offen war
+- Koffein konnte doppelt aktiviert werden und blieb dann hängen
+- Macs ohne Akku zeigten „100 %"
+- `⌃⌥N` funktionierte nicht, wenn das Einstellungsfenster vorne war
+- Hover öffnete die Notch auch auf dem Sperrbildschirm
+- Uhr erzeugte jede Sekunde neue Datumsformatierer (unnötige CPU-Last)
 
 ## Hinweise
 - **Fokus** braucht „Voller Festplattenzugriff": Systemeinstellungen → Datenschutz & Sicherheit → Voller Festplattenzugriff → DynamicNotch hinzufügen.
