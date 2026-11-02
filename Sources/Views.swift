@@ -115,10 +115,6 @@ struct SectionTitle: View {
     }
 }
 
-func formatTime(_ s: Double) -> String {
-    let i = max(0, Int(s))
-    return String(format: "%d:%02d", i / 60, i % 60)
-}
 
 // MARK: - Haupt-View
 
