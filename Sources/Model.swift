@@ -11,9 +11,16 @@ final class Model: ObservableObject {
     @Published var battery = 100
     @Published var charging = false
     @Published var nextEvent = "Kein Termin"
-    @Published var shelf: [URL] = []
+    @Published var shelf: [URL] = [] {
+        didSet { UserDefaults.standard.set(shelf.map { $0.path }, forKey: "shelfPaths") }
+    }
     @Published var remaining = 25 * 60
-    @Published var running = false
+    @Published var running = false {
+        didSet {
+            if running != oldValue { pomoEnd = running ? Date().addingTimeInterval(TimeInterval(remaining)) : nil }
+        }
+    }
+    @Published var hasBattery = true
     @Published var onBreak = false
     @Published var hud: HUD = .idle
     @Published var locked = false
@@ -27,6 +34,13 @@ final class Model: ObservableObject {
     let clipboard = ClipboardMonitor()
     let stats = SystemStats()
     let caffeine = Caffeine()
+    let quickTimer = QuickTimer()
+    let stopwatch = Stopwatch()
+    let downloads = DownloadsMonitor()
+    let weather = WeatherMonitor()
+    let bluetooth = BluetoothWatcher()
+    let updater = Updater()
+    private var pomoEnd: Date?
     private var collapseWork: DispatchWorkItem?
     private var isHovering = false
     private var lastPlugged: Bool?
@@ -37,7 +51,7 @@ final class Model: ObservableObject {
     static func flag(_ k: String, _ d: Bool) -> Bool { UserDefaults.standard.object(forKey: k) as? Bool ?? d }
 
     private let store = EKEventStore()
-    private let volume = VolumeMonitor()
+    let volume = VolumeMonitor()
     private let bright = BrightnessMonitor()
     private var ticks = 0
     private var hudTimer: Timer?
@@ -46,6 +60,9 @@ final class Model: ObservableObject {
     private var lastFocus: String?
 
     init() {
+        shelf = (UserDefaults.standard.stringArray(forKey: "shelfPaths") ?? [])
+            .map { URL(fileURLWithPath: $0) }
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
         readBattery()
         requestCalendar()
         lastBrightness = bright.read() ?? -1
@@ -57,13 +74,41 @@ final class Model: ObservableObject {
         nowPlaying.start()
         clipboard.start()
         stats.sample()
-        NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] e in
-            let f = e.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            if Model.flag("hotkeyOn", true), f == [.control, .option], e.charactersIgnoringModifiers?.lowercased() == "n" { self?.toggleOpen() }
+        quickTimer.onFinish = { [weak self] in self?.quickTimerDone() }
+        downloads.onFinished = { [weak self] u in self?.downloadDone(u) }
+        downloads.start()
+        weather.refresh()
+        bluetooth.onChange = { [weak self] name, on in
+            guard let self, Model.flag("notifyBluetooth", true), !self.locked else { return }
+            self.show(.symbol(BluetoothWatcher.symbol(for: name), on ? name : "\(name) getrennt"), hideAfter: 2.6)
         }
+        if Model.flag("notifyBluetooth", true) { bluetooth.start() }
 
-        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.tick() }
-        Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in self?.pollBrightness() }
+        // Tastenkürzel ⌃⌥N: global (andere Apps aktiv) und lokal (eigene Fenster aktiv)
+        let hotkey: (NSEvent) -> Bool = { [weak self] e in
+            let f = e.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard Model.flag("hotkeyOn", true), f == [.control, .option],
+                  e.charactersIgnoringModifiers?.lowercased() == "n" else { return false }
+            self?.toggleOpen()
+            return true
+        }
+        NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { e in _ = hotkey(e) }
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in hotkey(e) ? nil : e }
+
+        every(1) { [weak self] in self?.tick() }
+        every(0.15) { [weak self] in self?.pollBrightness() }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            if Model.flag("welcomeHUD", true) { self?.show(.symbol("sparkles", "Version \(appVersion)"), hideAfter: 2.4) }
+        }
+        if Model.flag("checkUpdates", true) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
+                self?.updater.check { avail in
+                    guard avail, let strong = self, let v = strong.updater.latest else { return }
+                    strong.show(.symbol("arrow.down.app.fill", "Update \(v)"), hideAfter: 5)
+                }
+            }
+        }
 
         let dc = DistributedNotificationCenter.default()
         dc.addObserver(forName: Notification.Name("com.apple.screenIsLocked"), object: nil, queue: .main) { [weak self] _ in
@@ -191,11 +236,47 @@ final class Model: ObservableObject {
         ticks += 1
         if ticks % 5 == 0 { readBattery() }
         if ticks % 30 == 0 { loadEvent() }
+        if ticks % 60 == 0 { weather.refresh() }
         if expanded && tab == .system && ticks % 2 == 0 { stats.sample() }
         if ticks % 2 == 0 { checkFocus() }
+        quickTimer.tick()
         if running {
-            remaining -= 1
+            if pomoEnd == nil { pomoEnd = Date().addingTimeInterval(TimeInterval(remaining)) }
+            remaining = max(0, Int(ceil((pomoEnd ?? Date()).timeIntervalSinceNow)))
             if remaining <= 0 { finish() }
+        }
+    }
+
+    func playSound(times: Int = 1) {
+        guard Model.flag("timerSound", true) else { return }
+        let n = UserDefaults.standard.string(forKey: "timerSoundName") ?? "Glass"
+        for i in 0..<max(1, times) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.9) {
+                NSSound(named: NSSound.Name(n))?.play()
+            }
+        }
+    }
+
+    func quickTimerDone() {
+        playSound(times: 3)
+        show(.symbol("timer", "Timer abgelaufen"), hideAfter: 6)
+    }
+
+    func downloadDone(_ u: URL) {
+        if Model.flag("downloadsToShelf", false), !shelf.contains(u) { shelf.append(u) }
+        guard Model.flag("notifyDownloads", true), !locked else { return }
+        show(.symbol("arrow.down.circle.fill", u.lastPathComponent), hideAfter: 3)
+    }
+
+    func switchTab(by delta: Int) {
+        let tabs = NotchTab.visible
+        guard let i = tabs.firstIndex(of: tab) else { tab = tabs.first ?? .home; return }
+        let n = max(0, min(tabs.count - 1, i + delta))
+        if n != i {
+            withAnimation(.easeInOut(duration: 0.2)) { tab = tabs[n] }
+            if Model.flag("haptic", true) {
+                NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
+            }
         }
     }
 
@@ -207,14 +288,13 @@ final class Model: ObservableObject {
     }
 
     func finish() {
-        if Model.flag("timerSound", true) {
-            let n = UserDefaults.standard.string(forKey: "timerSoundName") ?? "Glass"
-            NSSound(named: NSSound.Name(n))?.play()
-        }
+        playSound()
         if !onBreak { sessions += 1 }
         onBreak.toggle()
         remaining = onBreak ? breakSeconds : workSeconds
         running = onBreak ? Model.flag("autoStartBreak", false) : Model.flag("autoStartWork", false)
+        // Enddatum neu setzen, auch wenn "running" unverändert true bleibt
+        pomoEnd = running ? Date().addingTimeInterval(TimeInterval(remaining)) : nil
         show(.symbol(onBreak ? "cup.and.saucer.fill" : "brain.head.profile",
                      onBreak ? "Pause!" : "Weiter gehts"), hideAfter: 4)
     }
@@ -223,6 +303,15 @@ final class Model: ObservableObject {
         running = false
         onBreak = false
         remaining = workSeconds
+    }
+
+    func skipPhase() {
+        let wasRunning = running
+        running = false
+        if !onBreak { sessions += 1 }
+        onBreak.toggle()
+        remaining = onBreak ? breakSeconds : workSeconds
+        running = wasRunning
     }
 
     func applyTimerSettings() {
@@ -235,6 +324,7 @@ final class Model: ObservableObject {
         if v && !Model.flag("rememberTab", true) {
             tab = NotchTab(rawValue: UserDefaults.standard.string(forKey: "defaultTab") ?? "home") ?? .home
         }
+        if v && !NotchTab.visible.contains(tab) { tab = NotchTab.visible.first ?? .settings }
         withAnimation(.spring(response: 0.38, dampingFraction: 0.8)) { expanded = v }
         if v && Model.flag("haptic", true) {
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
@@ -245,7 +335,7 @@ final class Model: ObservableObject {
         isHovering = hovering
         collapseWork?.cancel()
         if hovering {
-            if hoverOpen {
+            if hoverOpen && !locked {
                 let d = Double(Model.pref("openDelayMs", 0)) / 1000
                 if d <= 0 { setExpanded(true) } else {
                     let w = DispatchWorkItem { [weak self] in self?.setExpanded(true) }
@@ -275,6 +365,7 @@ final class Model: ObservableObject {
     func readBattery() {
         guard let snap = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
               let list = IOPSCopyPowerSourcesList(snap)?.takeRetainedValue() as? [CFTypeRef] else { return }
+        if hasBattery != !list.isEmpty { hasBattery = !list.isEmpty }
         for ps in list {
             if let d = IOPSGetPowerSourceDescription(snap, ps)?.takeUnretainedValue() as? [String: Any] {
                 let cur = d[kIOPSCurrentCapacityKey] as? Int ?? 0
@@ -300,6 +391,9 @@ final class Model: ObservableObject {
     }
 
     func batteryEvents() {
+        if Model.flag("chargeSound", false), let last = lastPlugged, last != pluggedIn, pluggedIn {
+            NSSound(named: NSSound.Name("Pop"))?.play()
+        }
         if let last = lastPlugged, last != pluggedIn, Model.flag("notifyBattery", true), !locked {
             show(.symbol(pluggedIn ? "bolt.fill" : "powerplug", pluggedIn ? "Lädt \(battery) %" : "Akku \(battery) %"), hideAfter: 2.4)
         }
@@ -318,9 +412,10 @@ final class Model: ObservableObject {
             .filter { !$0.isAllDay && $0.endDate > start }
             .sorted { $0.startDate < $1.startDate }
         events = list.prefix(6).map {
-            EventItem(id: ($0.eventIdentifier ?? UUID().uuidString) + "\($0.startDate.timeIntervalSince1970)",
+            EventItem(id: ($0.eventIdentifier ?? ($0.title ?? "")) + "\($0.startDate.timeIntervalSince1970)",
                       title: $0.title ?? "Ohne Titel", start: $0.startDate, end: $0.endDate,
-                      color: Color(nsColor: $0.calendar.color ?? NSColor.systemOrange))
+                      color: Color(nsColor: $0.calendar.color ?? NSColor.systemOrange),
+                      meeting: Model.meetingURL($0), location: $0.location ?? "")
         }
         if let e = events.first {
             let f = DateFormatter()
@@ -336,6 +431,25 @@ final class Model: ObservableObject {
         } else {
             nextEvent = "Kein Termin in den nächsten 48 h"
         }
+    }
+
+    /// Sucht einen Video-Call-Link (Zoom, Meet, Teams, Webex, FaceTime …) im Termin
+    static func meetingURL(_ e: EKEvent) -> URL? {
+        let hosts = ["zoom.us", "meet.google.com", "teams.microsoft.com", "teams.live.com",
+                     "webex.com", "facetime.apple.com", "whereby.com", "meet.jit.si", "gotomeeting.com"]
+        var texts: [String] = []
+        if let u = e.url { texts.append(u.absoluteString) }
+        if let l = e.location { texts.append(l) }
+        if let n = e.notes { texts.append(n) }
+        guard let det = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return nil }
+        for t in texts {
+            for match in det.matches(in: t, range: NSRange(t.startIndex..., in: t)) {
+                if let u = match.url, let h = u.host?.lowercased(), hosts.contains(where: { h.hasSuffix($0) }) {
+                    return u
+                }
+            }
+        }
+        return nil
     }
 }
 

@@ -5,6 +5,7 @@ import AppKit
 
 final class NotchPanel: NSPanel {
     override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
 }
 
 // MARK: - App
@@ -13,6 +14,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var panel: NotchPanel!
     var model: Model!
     var statusItem: NSStatusItem?
+    var notchScreen: NSScreen?
+    private var swipeAcc: CGFloat = 0
+    private var hiddenForFullscreen = false
 
     func applicationDidFinishLaunching(_ n: Notification) {
         UserDefaults.standard.register(defaults: [
@@ -24,7 +28,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "hudSeconds": 1.6, "spotifyOn": true, "musicOn": true, "showEqualizer": true, "artInNotch": true,
             "autoStartBreak": false, "autoStartWork": false, "timerSound": true, "timerSoundName": "Glass",
             "hudVolume": true, "hudBrightness": true, "hudFocus": true, "lowBattery": 20, "eventLead": 5,
-            "clipMax": 25, "captureKeys": true
+            "clipMax": 25, "captureKeys": true,
+            // neu in 3.0
+            "hiddenTabs": "", "notchOutline": false, "hideInFullscreen": true, "swipeTabs": true,
+            "watchDownloads": true, "notifyDownloads": true, "downloadsToShelf": false, "liveDownloads": true,
+            "liveTimers": true, "weatherOn": true, "weatherCity": "", "notifyBluetooth": true,
+            "checkUpdates": true, "welcomeHUD": true, "clipPaste": false, "chargeSound": false, "lastTimerMin": 10
         ])
         model = Model()
         panel = NotchPanel(contentRect: .zero,
@@ -44,6 +53,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                                object: nil, queue: .main) { [weak self] _ in self?.reposition() }
         panel.orderFrontRegardless()
         setupStatusItem()
+        setupSwipe()
+        every(1) { [weak self] in self?.checkFullscreen() }
         NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
             self?.statusItem?.isVisible = UserDefaults.standard.object(forKey: "showMenuBarIcon") as? Bool ?? true
         }
@@ -64,9 +75,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         s.target = self
         let o = NSMenuItem(title: "Notch öffnen / fixieren", action: #selector(toggleNotch), keyEquivalent: "")
         o.target = self
+        let t = NSMenuItem(title: "Timer 5 Minuten", action: #selector(timer5), keyEquivalent: "")
+        t.target = self
+        let u = NSMenuItem(title: "Nach Updates suchen…", action: #selector(checkUpdates), keyEquivalent: "")
+        u.target = self
         let q = NSMenuItem(title: "DynamicNotch beenden", action: #selector(quit), keyEquivalent: "q")
         q.target = self
-        menu.addItem(s); menu.addItem(o); menu.addItem(.separator()); menu.addItem(q)
+        let v = NSMenuItem(title: "DynamicNotch \(appVersion)", action: nil, keyEquivalent: "")
+        v.isEnabled = false
+        menu.addItem(v); menu.addItem(.separator())
+        menu.addItem(s); menu.addItem(o); menu.addItem(t); menu.addItem(u); menu.addItem(.separator()); menu.addItem(q)
         item.menu = menu
         item.isVisible = UserDefaults.standard.object(forKey: "showMenuBarIcon") as? Bool ?? true
         statusItem = item
@@ -74,6 +92,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func openSettings() { SettingsWindow.show() }
     @objc func toggleNotch() { model.toggleOpen() }
+    @objc func timer5() { model.quickTimer.start(minutes: 5) }
+    @objc func checkUpdates() {
+        model.updater.check { [weak self] avail in
+            guard let self else { return }
+            if avail {
+                self.model.updater.openDownload()
+            } else {
+                let a = NSAlert()
+                a.messageText = "DynamicNotch ist aktuell"
+                a.informativeText = "Du nutzt Version \(appVersion)."
+                NSApp.activate(ignoringOtherApps: true)
+                a.runModal()
+            }
+        }
+    }
+
+    // Zwei-Finger-Wischen im offenen Panel wechselt den Bereich
+    func setupSwipe() {
+        NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] e in
+            guard let self, e.window === self.panel, self.model.expanded,
+                  Model.flag("swipeTabs", true), self.model.tab != .shelf else { return e }
+            if e.phase == .began { self.swipeAcc = 0 }
+            if abs(e.scrollingDeltaX) > abs(e.scrollingDeltaY) { self.swipeAcc += e.scrollingDeltaX }
+            if e.phase == .ended || e.phase == .cancelled {
+                if abs(self.swipeAcc) > 60 { self.model.switchTab(by: self.swipeAcc < 0 ? 1 : -1) }
+                self.swipeAcc = 0
+            }
+            return e
+        }
+    }
+
+    // Im Vollbild (Video, Spiele, Präsentationen) die Notch ausblenden
+    func checkFullscreen() {
+        let hide = Model.flag("hideInFullscreen", true) && !model.expanded && FullscreenCheck.active(on: notchScreen)
+        guard hide != hiddenForFullscreen else { return }
+        hiddenForFullscreen = hide
+        panel.ignoresMouseEvents = hide
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.25
+            self.panel.animator().alphaValue = hide ? 0 : 1
+        }
+    }
     @objc func quit() { NSApp.terminate(nil) }
 
     // Abschalten: in den Einstellungen oder: defaults write local.dynamicnotch lockScreenOverlay -bool false
@@ -84,7 +144,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func reposition() {
-        let screen = NSScreen.screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.main ?? NSScreen.screens[0]
+        guard let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.main ?? NSScreen.screens.first
+        else { return }
+        notchScreen = screen
         // Ohne echte Notch wird automatisch eine "virtuelle" Notch gezeichnet.
         var notchW: CGFloat = 188
         var notchH: CGFloat = 32
@@ -94,6 +156,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             notchH = screen.safeAreaInsets.top
         }
         panel.contentView = NSHostingView(rootView: NotchView(m: model, np: model.nowPlaying,
+                                                              qt: model.quickTimer, sw: model.stopwatch,
+                                                              dl: model.downloads,
                                                               notchW: notchW, notchH: notchH))
         let size = NSSize(width: NotchView.panelW, height: NotchView.panelH)
         panel.setFrame(NSRect(x: screen.frame.midX - size.width / 2,

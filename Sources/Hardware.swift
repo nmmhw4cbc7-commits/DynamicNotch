@@ -70,6 +70,14 @@ final class VolumeMonitor {
     }
 
     var canControl: Bool { read() != nil }
+    var level: Float { read()?.0 ?? 0 }
+
+    /// Lautstärke direkt setzen (z. B. per Regler im Medien-Bereich)
+    func setLevel(_ v: Float) {
+        guard let cur = read() else { return }
+        writeVolume(max(0, min(1, v)))
+        if cur.1 && v > 0 { writeMute(false) }
+    }
 
     func step(up: Bool, fine: Bool) -> (Float, Bool)? {
         guard let cur = read() else { return nil }
