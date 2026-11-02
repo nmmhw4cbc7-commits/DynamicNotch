@@ -2,16 +2,26 @@ import SwiftUI
 import AppKit
 import IOKit.pwr_mgt
 import Darwin
+import IOKit.ps
 
 // MARK: - Tabs & Datentypen
 
 enum NotchTab: String, CaseIterable, Identifiable {
-    case home, media, tools, clipboard, shelf, system, settings
+    case home, media, timer, tools, clipboard, shelf, system, settings
     var id: String { rawValue }
+
+    /// Tabs, die nicht in den Einstellungen ausgeblendet wurden (Einstellungen bleiben immer sichtbar)
+    static var visible: [NotchTab] { visible(hidden: UserDefaults.standard.string(forKey: "hiddenTabs") ?? "") }
+
+    static func visible(hidden: String) -> [NotchTab] {
+        let set = Set(hidden.split(separator: ",").map(String.init))
+        return allCases.filter { $0 == .settings || !set.contains($0.rawValue) }
+    }
     var icon: String {
         switch self {
         case .home: return "house.fill"
         case .media: return "music.note"
+        case .timer: return "timer"
         case .tools: return "wrench.and.screwdriver.fill"
         case .clipboard: return "doc.on.clipboard.fill"
         case .shelf: return "tray.full.fill"
@@ -23,6 +33,7 @@ enum NotchTab: String, CaseIterable, Identifiable {
         switch self {
         case .home: return "Übersicht"
         case .media: return "Medien"
+        case .timer: return "Timer"
         case .tools: return "Werkzeuge"
         case .clipboard: return "Zwischenablage"
         case .shelf: return "Ablage"
@@ -38,12 +49,16 @@ struct EventItem: Identifiable, Equatable {
     let start: Date
     let end: Date
     let color: Color
+    var meeting: URL? = nil
+    var location: String = ""
 }
 
 // MARK: - Akzentfarbe
 
 let accentOptions: [(String, String)] = [("orange", "Orange"), ("green", "Grün"), ("blue", "Blau"),
-                                         ("pink", "Pink"), ("purple", "Lila"), ("red", "Rot")]
+                                         ("pink", "Pink"), ("purple", "Lila"), ("red", "Rot"),
+                                         ("teal", "Türkis"), ("yellow", "Gelb"), ("mint", "Mint"),
+                                         ("indigo", "Indigo")]
 
 func notchAccent(_ n: String) -> Color {
     switch n {
@@ -52,6 +67,10 @@ func notchAccent(_ n: String) -> Color {
     case "pink": return .pink
     case "purple": return .purple
     case "red": return .red
+    case "teal": return .teal
+    case "yellow": return .yellow
+    case "mint": return .mint
+    case "indigo": return .indigo
     default: return .orange
     }
 }
@@ -90,7 +109,10 @@ struct Track: Equatable {
 final class NowPlayingMonitor: ObservableObject {
     @Published var track: Track?
     @Published var position: Double = 0
-    @Published var artwork: NSImage?
+    @Published var artwork: NSImage? {
+        didSet { tint = artwork.flatMap(averageColor) }
+    }
+    @Published var tint: Color?
 
     var isPlaying: Bool { track?.playing ?? false }
 
@@ -100,8 +122,8 @@ final class NowPlayingMonitor: ObservableObject {
     private var artCache: [String: NSImage] = [:]
 
     func start() {
-        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.poll() }
-        Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        every(2) { [weak self] in self?.poll() }
+        every(1) { [weak self] in
             guard let self, let t = self.track, t.playing else { return }
             self.position += 1
             if t.duration > 0 { self.position = min(self.position, t.duration) }
@@ -134,7 +156,9 @@ final class NowPlayingMonitor: ObservableObject {
 
     static func query(app: String) -> (Track, Double, String?)? {
         let artLine = app == "Spotify" ? "(artwork url of current track)" : "\"\""
+        // "is running" verhindert, dass ein gerade beendeter Player wieder gestartet wird
         let script = """
+        if application "\(app)" is not running then return "stopped"
         tell application "\(app)"
           if player state is stopped then return "stopped"
           set st to player state as string
@@ -200,39 +224,58 @@ final class NowPlayingMonitor: ObservableObject {
         if var t = track { t.playing.toggle(); track = t }
     }
     func next() { send("next track") }
+    func openPlayer() {
+        guard let app = track?.app else { return }
+        let id = app == "Spotify" ? "com.spotify.client" : "com.apple.Music"
+        if let u = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
+            NSWorkspace.shared.openApplication(at: u, configuration: NSWorkspace.OpenConfiguration())
+        }
+    }
     func previous() { send("previous track") }
 
     func seek(to s: Double) {
         guard let app = track?.app else { return }
-        spawn("/usr/bin/osascript", ["-e", "tell application \"\(app)\" to set player position to \(Int(s))"])
+        spawn("/usr/bin/osascript", ["-e", "if application \"\(app)\" is running then",
+                                     "-e", "tell application \"\(app)\" to set player position to \(Int(s))",
+                                     "-e", "end if"])
         position = s
     }
 
     private func send(_ cmd: String) {
         guard let app = track?.app else { return }
-        spawn("/usr/bin/osascript", ["-e", "tell application \"\(app)\" to \(cmd)"])
+        spawn("/usr/bin/osascript", ["-e", "if application \"\(app)\" is running then",
+                                     "-e", "tell application \"\(app)\" to \(cmd)",
+                                     "-e", "end if"])
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.poll() }
     }
 }
 
-// MARK: - Zwischenablage-Verlauf (nur im Speicher, Passwortmanager-Einträge werden ignoriert)
+// MARK: - Zwischenablage-Verlauf (Passwortmanager-Einträge werden ignoriert, nur Angeheftetes wird gespeichert)
 
 final class ClipboardMonitor: ObservableObject {
     @Published var items: [String] = []
+    @Published var pinned: [String] = UserDefaults.standard.stringArray(forKey: "pinnedClips") ?? [] {
+        didSet { UserDefaults.standard.set(pinned, forKey: "pinnedClips") }
+    }
     private var lastCount = NSPasteboard.general.changeCount
 
     func start() {
-        Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in self?.check() }
+        every(0.6) { [weak self] in self?.check() }
     }
 
     private func check() {
+        // NSPasteboard.general neu holen: übersteht so auch einen Neustart des Pasteboard-Dienstes
         let pb = NSPasteboard.general
         guard pb.changeCount != lastCount else { return }
         lastCount = pb.changeCount
         guard Model.flag("clipboardEnabled", true) else { return }
         let types = pb.types ?? []
-        let secret = ["org.nspasteboard.ConcealedType", "org.nspasteboard.TransientType"]
+        let secret = ["org.nspasteboard.ConcealedType", "org.nspasteboard.TransientType",
+                      "org.nspasteboard.AutoGeneratedType", "com.agilebits.onepassword"]
         if types.contains(where: { secret.contains($0.rawValue) }) { return }
+        if let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier?.lowercased(),
+           ["com.apple.keychainaccess", "com.1password", "com.agilebits", "com.bitwarden", "com.apple.passwords"]
+            .contains(where: { front.hasPrefix($0) }) { return }
         guard let s = pb.string(forType: .string) else { return }
         let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty, t.count < 5000 else { return }
@@ -249,6 +292,15 @@ final class ClipboardMonitor: ObservableObject {
         lastCount = pb.changeCount
     }
 
+    func togglePin(_ s: String) {
+        if pinned.contains(s) { pinned.removeAll { $0 == s } } else { pinned.insert(s, at: 0) }
+    }
+
+    func remove(_ s: String) {
+        items.removeAll { $0 == s }
+        pinned.removeAll { $0 == s }
+    }
+
     func clear() { items.removeAll() }
 }
 
@@ -261,6 +313,13 @@ final class SystemStats: ObservableObject {
     @Published var memTotal: Double = 1
     @Published var down: Double = 0
     @Published var up: Double = 0
+    @Published var diskFree: Double = 0
+    @Published var diskTotal: Double = 1
+    @Published var cycles = 0
+    @Published var health = 0
+    @Published var hasBatteryInfo = false
+    @Published var uptime: TimeInterval = 0
+    @Published var timeLeft: Double = -1   // Sekunden, -1 unbekannt, -2 am Netzteil
 
     private var prevTicks: (UInt32, UInt32, UInt32, UInt32)?
     private var prevNet: (UInt64, UInt64)?
@@ -270,6 +329,20 @@ final class SystemStats: ObservableObject {
         sampleCPU()
         sampleMem()
         sampleNet()
+        sampleExtras()
+    }
+
+    private func sampleExtras() {
+        uptime = ProcessInfo.processInfo.systemUptime
+        if let v = try? URL(fileURLWithPath: "/").resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey,
+                                                                            .volumeTotalCapacityKey]) {
+            diskFree = Double(v.volumeAvailableCapacityForImportantUsage ?? 0)
+            diskTotal = Double(max(v.volumeTotalCapacity ?? 1, 1))
+        }
+        if let h = readBatteryHealth() {
+            cycles = h.cycles; health = h.health; hasBatteryInfo = true
+        }
+        timeLeft = IOPSGetTimeRemainingEstimate()
     }
 
     private func sampleCPU() {
@@ -354,18 +427,32 @@ func formatRate(_ b: Double) -> String {
 
 func formatGB(_ b: Double) -> String { String(format: "%.1f GB", b / 1_073_741_824) }
 
-// MARK: - Koffein (Mac wach halten)
+// MARK: - Koffein (Mac wach halten, optional mit Zeitlimit)
 
 final class Caffeine: ObservableObject {
     @Published var on = false
+    @Published var until: Date?
     private var assertion: IOPMAssertionID = 0
+    private var offWork: DispatchWorkItem?
 
-    func set(_ v: Bool) {
+    func set(_ v: Bool, minutes: Int? = nil) {
+        offWork?.cancel()
+        offWork = nil
+        until = nil
         if v {
-            let r = IOPMAssertionCreateWithName("PreventUserIdleDisplaySleep" as CFString,
-                                                IOPMAssertionLevel(kIOPMAssertionLevelOn),
-                                                "DynamicNotch Koffein" as CFString, &assertion)
-            on = (r == kIOReturnSuccess)
+            if assertion == 0 {
+                let r = IOPMAssertionCreateWithName("PreventUserIdleDisplaySleep" as CFString,
+                                                    IOPMAssertionLevel(kIOPMAssertionLevelOn),
+                                                    "DynamicNotch Koffein" as CFString, &assertion)
+                if r != kIOReturnSuccess { assertion = 0 }
+            }
+            on = assertion != 0
+            if on, let m = minutes {
+                let w = DispatchWorkItem { [weak self] in self?.set(false) }
+                offWork = w
+                until = Date().addingTimeInterval(TimeInterval(m * 60))
+                DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(m * 60), execute: w)
+            }
         } else {
             if assertion != 0 { IOPMAssertionRelease(assertion); assertion = 0 }
             on = false
@@ -378,14 +465,80 @@ final class Caffeine: ObservableObject {
 
 enum QuickActions {
     static var sampler: NSColorSampler?
+    static var savedInputVolume = 75
 
     static func screenshot() { spawn("/usr/sbin/screencapture", ["-ic"]) }
+    static func screenshotToDesktop() {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd 'um' HH.mm.ss"
+        let path = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Desktop/Bildschirmfoto \(f.string(from: Date())).png").path
+        spawn("/usr/sbin/screencapture", ["-i", path])
+    }
     static func sleepDisplay() { spawn("/usr/bin/pmset", ["displaysleepnow"]) }
+    static func sleepNow() { spawn("/usr/bin/pmset", ["sleepnow"]) }
     static func screenSaver() { spawn("/usr/bin/open", ["-a", "ScreenSaverEngine"]) }
 
     static func toggleDarkMode() {
         spawn("/usr/bin/osascript", ["-e",
               "tell application \"System Events\" to tell appearance preferences to set dark mode to not dark mode"])
+    }
+
+    /// Sperrt sofort (private login.framework-Funktion), sonst Display aus
+    static func lockScreen() {
+        if let h = dlopen("/System/Library/PrivateFrameworks/login.framework/Versions/Current/login", RTLD_LAZY),
+           let p = dlsym(h, "SACLockScreenImmediate") {
+            typealias Fn = @convention(c) () -> Int32
+            _ = unsafeBitCast(p, to: Fn.self)()
+            return
+        }
+        sleepDisplay()
+    }
+
+    /// Schaltet einen Finder-Schalter um und startet den Finder neu. done(true) = jetzt aktiv
+    static func toggleFinderFlag(_ key: String, defaultOn: Bool, _ done: @escaping (Bool) -> Void) {
+        DispatchQueue.global().async {
+            let cur = runProcess("/usr/bin/defaults", ["read", "com.apple.finder", key]).lowercased()
+            let isOn = cur.isEmpty ? defaultOn : (cur == "1" || cur == "true" || cur == "yes")
+            _ = runProcess("/usr/bin/defaults", ["write", "com.apple.finder", key, "-bool", isOn ? "false" : "true"])
+            _ = runProcess("/usr/bin/killall", ["Finder"])
+            DispatchQueue.main.async { done(!isOn) }
+        }
+    }
+
+    static func wifiDevice() -> String {
+        let lines = runProcess("/usr/sbin/networksetup", ["-listallhardwareports"]).components(separatedBy: "\n")
+        for (i, l) in lines.enumerated() where l.contains("Wi-Fi") || l.contains("AirPort") {
+            if i + 1 < lines.count, lines[i + 1].hasPrefix("Device: ") { return String(lines[i + 1].dropFirst(8)) }
+        }
+        return "en0"
+    }
+
+    /// done(true) = WLAN jetzt an, nil = unbekannt
+    static func toggleWiFi(_ done: @escaping (Bool?) -> Void) {
+        DispatchQueue.global().async {
+            let dev = wifiDevice()
+            let st = runProcess("/usr/sbin/networksetup", ["-getairportpower", dev])
+            guard st.hasSuffix("On") || st.hasSuffix("Off") else { DispatchQueue.main.async { done(nil) }; return }
+            let isOn = st.hasSuffix("On")
+            _ = runProcess("/usr/sbin/networksetup", ["-setairportpower", dev, isOn ? "off" : "on"])
+            DispatchQueue.main.async { done(!isOn) }
+        }
+    }
+
+    /// done(true) = Mikrofon jetzt stumm
+    static func toggleMic(_ done: @escaping (Bool) -> Void) {
+        DispatchQueue.global().async {
+            let cur = Int(runProcess("/usr/bin/osascript", ["-e", "input volume of (get volume settings)"])) ?? 50
+            if cur > 0 {
+                savedInputVolume = cur
+                _ = runProcess("/usr/bin/osascript", ["-e", "set volume input volume 0"])
+                DispatchQueue.main.async { done(true) }
+            } else {
+                _ = runProcess("/usr/bin/osascript", ["-e", "set volume input volume \(max(savedInputVolume, 50))"])
+                DispatchQueue.main.async { done(false) }
+            }
+        }
     }
 
     static func pickColor(_ done: @escaping (String) -> Void) {
@@ -394,10 +547,31 @@ enum QuickActions {
         s.show { color in
             sampler = nil
             guard let c = color?.usingColorSpace(.sRGB) else { return }
-            let hex = String(format: "#%02X%02X%02X", Int(c.redComponent * 255), Int(c.greenComponent * 255), Int(c.blueComponent * 255))
+            let hex = String(format: "#%02X%02X%02X", Int(round(c.redComponent * 255)),
+                             Int(round(c.greenComponent * 255)), Int(round(c.blueComponent * 255)))
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(hex, forType: .string)
             done(hex)
+        }
+    }
+
+    /// Packt alle Dateien der Ablage in eine ZIP-Datei auf dem Schreibtisch
+    static func zip(_ urls: [URL], _ done: @escaping (URL?) -> Void) {
+        DispatchQueue.global().async {
+            let fm = FileManager.default
+            let f = DateFormatter()
+            f.dateFormat = "yyyy-MM-dd HH.mm.ss"
+            let tmp = fm.temporaryDirectory.appendingPathComponent("Ablage \(f.string(from: Date()))")
+            try? fm.removeItem(at: tmp)
+            do { try fm.createDirectory(at: tmp, withIntermediateDirectories: true) } catch {
+                DispatchQueue.main.async { done(nil) }; return
+            }
+            for u in urls { try? fm.copyItem(at: u, to: tmp.appendingPathComponent(u.lastPathComponent)) }
+            let out = fm.homeDirectoryForCurrentUser.appendingPathComponent("Desktop/\(tmp.lastPathComponent).zip")
+            _ = runProcess("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", tmp.path, out.path])
+            try? fm.removeItem(at: tmp)
+            let ok = fm.fileExists(atPath: out.path)
+            DispatchQueue.main.async { done(ok ? out : nil) }
         }
     }
 }

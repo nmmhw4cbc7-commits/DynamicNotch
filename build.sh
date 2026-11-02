@@ -20,13 +20,17 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>CFBundleIdentifier</key><string>local.dynamicnotch</string>
 <key>CFBundleName</key><string>$NAME</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>2.1</string>
+<key>CFBundleShortVersionString</key><string>3.0</string>
+<key>CFBundleVersion</key><string>30</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 <key>NSPrincipalClass</key><string>NSApplication</string>
 <key>NSCalendarsUsageDescription</key><string>Zeigt deinen nächsten Termin in der Notch.</string>
 <key>NSAppleEventsUsageDescription</key><string>Zeigt und steuert die Wiedergabe in Spotify und Musik.</string>
 <key>NSCalendarsFullAccessUsageDescription</key><string>Zeigt deinen nächsten Termin in der Notch.</string>
+<key>NSBluetoothAlwaysUsageDescription</key><string>Zeigt in der Notch an, wenn AirPods, Tastatur oder Maus verbunden werden.</string>
+<key>NSDownloadsFolderUsageDescription</key><string>Zeigt laufende und fertige Downloads in der Notch.</string>
+<key>NSDesktopFolderUsageDescription</key><string>Speichert Screenshots und ZIP-Dateien der Ablage auf dem Schreibtisch.</string>
 </dict></plist>
 PLIST
 
